@@ -1,0 +1,120 @@
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+import warnings
+import pickle
+import joblib
+import os
+from datetime import datetime
+
+
+warnings.filterwarnings('ignore')
+
+
+def analizar_resultados(resultados_clustering):
+    """
+    Analiza los resultados de todos los modelos de clustering y selecciona el mejor
+    """
+    
+    print(f"\nANÁLISIS DE RESULTADOS MULTI-MODELO")
+    print("=" * 60)
+    
+    if not resultados_clustering['resultados']:
+        print("No hay resultados para analizar")
+        return None
+    
+    # Recopilar todos los resultados en una lista plana
+    todos_resultados = []
+    
+    for tipo_modelo, resultados_tipo in resultados_clustering['resultados'].items():
+        print(f"\nAnálisis modelo {tipo_modelo.upper()}:")
+        print("-" * 30)
+        
+        for subtipo, resultados_subtipo in resultados_tipo.items():
+            if not resultados_subtipo:
+                print(f"No hay resultados para {subtipo}")
+                continue
+            
+            print(f"Resultados {subtipo}:")
+            
+            for k, resultado in resultados_subtipo.items():
+                # Agregar información del modelo
+                resultado['modelo_tipo_completo'] = f"{tipo_modelo}_{subtipo}"
+                resultado['k_param'] = k
+                todos_resultados.append(resultado)
+                
+                # Mostrar resumen
+                print(f"      {k}: S={resultado['silhouette']:.3f}, Score={resultado['score_gmm']:.3f}")
+                
+                # Mostrar distribución para algunos modelos
+                if 'distribucion' in resultado:
+                    distribucion = resultado['distribucion']
+                    if -1 in distribucion:  # DBSCAN con ruido
+                        n_noise = distribucion[-1]
+                        total = sum(distribucion.values())
+                        print(f"             Ruido: {n_noise}/{total} ({n_noise/total*100:.1f}%)")
+    
+    # Encontrar el mejor modelo global
+    print(f"\nSELECCIÓN DEL MEJOR MODELO GLOBAL:")
+    print("-" * 40)
+    
+    # Ordenar por score_gmm
+    todos_resultados_sorted = sorted(todos_resultados, key=lambda x: x['score_gmm'], reverse=True)
+    
+    # Mostrar top 5 modelos
+    print("\nTop 5 mejores modelos:")
+    for i, resultado in enumerate(todos_resultados_sorted[:5]):
+        tipo = resultado.get('tipo_modelo', resultado.get('cov_type', 'N/A'))
+        k_info = resultado.get('k_param', 'N/A')
+        
+        print(f"   {i+1}. {resultado['modelo_tipo_completo']} (k={k_info}):")
+        print(f"      Score: {resultado['score_gmm']:.4f}")
+        print(f"      Silhouette: {resultado['silhouette']:.4f}")
+        print(f"      Calinski: {resultado['calinski_harabasz']:.1f}")
+        print(f"      Davies-Bouldin: {resultado['davies_bouldin']:.3f}")
+    
+    # Seleccionar el mejor
+    mejor_resultado = todos_resultados_sorted[0]
+    
+    print(f"\nMEJOR MODELO SELECCIONADO:")
+    print(f"   • Modelo: {mejor_resultado['modelo_tipo_completo']}")
+    print(f"   • Parámetros: k={mejor_resultado.get('k_param', 'N/A')}")
+    print(f"   • Score: {mejor_resultado['score_gmm']:.4f}")
+    print(f"   • Silhouette: {mejor_resultado['silhouette']:.4f}")
+    
+    if mejor_resultado.get('bic') is not None:
+        print(f"   • BIC: {mejor_resultado['bic']:.1f}")
+        print(f"   • AIC: {mejor_resultado['aic']:.1f}")
+    
+    if mejor_resultado.get('confianza_promedio') is not None:
+        print(f"   • Confianza promedio: {mejor_resultado['confianza_promedio']:.3f}")
+    
+    print(f"\nDistribución del mejor modelo:")
+    distribucion = mejor_resultado['distribucion']
+    for cluster_id, count in distribucion.items():
+        if cluster_id == -1:
+            print(f"   • Ruido: {count:,} elementos")
+        else:
+            pct = (count / sum([v for k,v in distribucion.items() if k != -1])) * 100
+            print(f"   • Cluster {cluster_id}: {count:,} elementos ({pct:.1f}%)")
+    
+    # Preparar retorno compatible con el código original
+    if 'gmm' in mejor_resultado['modelo_tipo_completo']:
+        mejor_cov_type = mejor_resultado.get('cov_type', 'full')
+        mejor_k = mejor_resultado.get('k_param')
+    else:
+        mejor_cov_type = mejor_resultado['modelo_tipo_completo']
+        mejor_k = mejor_resultado.get('k_param', mejor_resultado.get('eps', 'auto'))
+    
+    return {
+        'mejor_modelo': mejor_resultado,
+        'mejor_cov_type': mejor_cov_type,
+        'mejor_k': mejor_k,
+        'todos_resultados': todos_resultados_sorted[:10],  # Top 10 resultados
+        'todos_modelos': resultados_clustering['resultados'],  # TODOS los modelos evaluados
+        'data_used': resultados_clustering['data_used'],
+        'pca_model': resultados_clustering['pca_model']
+    }

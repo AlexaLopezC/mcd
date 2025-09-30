@@ -1,0 +1,132 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+import warnings
+import pickle
+import joblib
+import os
+from datetime import datetime
+
+
+warnings.filterwarnings('ignore')
+
+# ==========================================
+# PASO 1: ANÁLISIS INICIAL DEL DATASET
+# ==========================================
+
+def analizar_estructura_dataset(df):
+    """
+    Analiza la estructura de tu dataset sin asumir nada
+    
+    Args:
+        df: Tu DataFrame original
+    
+    Returns:
+        dict: Información sobre la estructura de tus datos
+    """
+    
+    print("=" * 60)
+    print("PASO 1: ANÁLISIS DE ESTRUCTURA DE TU DATASET")
+    print("=" * 60)
+    
+    # Información básica
+    print(f"\nInformación General:")
+    print(f"   - Número de filas: {len(df):,}")
+    print(f"   - Número de columnas: {len(df.columns)}")
+    print(f"   - Tamaño en memoria: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+    
+    # Clasificar columnas por tipo
+    categorical_columns = []
+    numerical_columns = []
+    
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            categorical_columns.append(col)
+        elif df[col].nunique() < 50 and df[col].dtype in ['int64', 'float64']:
+            # Numéricas con pocas categorías (probablemente categóricas codificadas)
+            categorical_columns.append(col)
+        else:
+            numerical_columns.append(col)
+    
+    print(f"\nDistribución por Tipo:")
+    print(f"   - Variables categóricas: {len(categorical_columns)}")
+    print(f"   - Variables numéricas: {len(numerical_columns)}")
+    
+    # Análisis de valores faltantes
+    missing_info = df.isnull().sum()
+    cols_with_missing = missing_info[missing_info > 0].sort_values(ascending=False)
+    
+    print(f"\nValores Faltantes:")
+    if len(cols_with_missing) > 0:
+        print(f"   - Columnas con valores faltantes: {len(cols_with_missing)}")
+        print(f"   - Total de valores faltantes: {missing_info.sum():,}")
+        
+        print(f"\n   Top 10 columnas con más valores faltantes:")
+        for col, missing_count in cols_with_missing.head(10).items():
+            pct = (missing_count / len(df)) * 100
+            print(f"     • {col}: {missing_count:,} ({pct:.1f}%)")
+    else:
+        print("   - No hay valores faltantes en el dataset")
+    
+    # Análisis de cardinalidad para categóricas
+    print(f"\nAnálisis de Variables Categóricas:")
+    if categorical_columns:
+        print(f"   Primeras 15 variables categóricas y su cardinalidad:")
+        high_cardinality = []
+        
+        for col in categorical_columns[:15]:
+            unique_count = df[col].nunique()
+            print(f"     • {col}: {unique_count} valores únicos")
+            
+            if unique_count > 100:
+                high_cardinality.append(col)
+        
+        if high_cardinality:
+            print(f"\nVariables con alta cardinalidad (>100 valores): {len(high_cardinality)}")
+            for col in high_cardinality[:5]:
+                print(f"     • {col}: {df[col].nunique()} valores")
+    
+    # Análisis de variables numéricas
+    print(f"\nAnálisis de Variables Numéricas:")
+    if numerical_columns:
+        print(f"   Estadísticas de primeras 10 variables numéricas:")
+        for col in numerical_columns[:10]:
+            stats = df[col].describe()
+            print(f"     • {col}: min={stats['min']:.2f}, max={stats['max']:.2f}, "
+                  f"mean={stats['mean']:.2f}, std={stats['std']:.2f}")
+    
+    # Detectar posibles outliers en numéricas
+    print(f"\nDetección de Outliers (método IQR):")
+    outlier_info = {}
+    
+    for col in numerical_columns[:10]:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        outliers = df[(df[col] < Q1 - 1.5 * IQR) | (df[col] > Q3 + 1.5 * IQR)]
+        
+        if len(outliers) > 0:
+            outlier_pct = (len(outliers) / len(df)) * 100
+            outlier_info[col] = len(outliers)
+            if outlier_pct > 1:  # Solo mostrar si hay más del 1% de outliers
+                print(f"     • {col}: {len(outliers)} outliers ({outlier_pct:.1f}%)")
+    
+    # Resumen para siguientes pasos
+    results = {
+        'categorical_columns': categorical_columns,
+        'numerical_columns': numerical_columns,
+        'missing_columns': cols_with_missing.to_dict(),
+        'high_cardinality_cols': high_cardinality if 'high_cardinality' in locals() else [],
+        'outlier_info': outlier_info,
+        'total_rows': len(df),
+        'total_cols': len(df.columns)
+    }
+    
+    print(f"\nRESUMEN PARA SIGUIENTES PASOS:")
+    print(f"   - Dataset listo para preprocesamiento")
+    print(f"   - Se expandirá a ~{len(categorical_columns) * 3 + len(numerical_columns)} variables después del encoding")
+    print(f"   - Adecuado para descubrimiento de segmentos con árboles")
+    
+    return results

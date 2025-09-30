@@ -1,0 +1,535 @@
+
+# ==========================================
+# PASO 3. EVALUACIÓN MULTI-MODELO DE CLUSTERING
+# ==========================================
+
+
+from sklearn.mixture import GaussianMixture
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.cluster.hierarchy import dendrogram, linkage
+
+def evaluacion_modelos_clustering(data_normalized, k_range=(4, 10), tipos_covarianza=['full', 'tied', 'diag']):
+    """
+    Ejecuta múltiples modelos de clustering con diferentes configuraciones
+    Especializado para encontrar los mejores clusters sin restricciones de balance
+    
+    Args:
+        data_normalized: Datos normalizados del Paso 2
+        k_range: Rango de número de clusters (inicio, fin)
+        tipos_covarianza: Tipos de matriz de covarianza a probar para GMM
+    
+    Returns:
+        dict: Resultados completos de todos los modelos
+    """
+    
+    print("=" * 70)
+    print("EVALUACIÓN MULTI-MODELO DE CLUSTERING")
+    print("=" * 70)
+    
+    print(f"Configuración:")
+    print(f"   • Rango de clusters: {k_range[0]} a {k_range[1]}")
+    print(f"   • Modelos a evaluar: GMM, K-Means, K-Means++, DBSCAN, Jerárquico")
+    print(f"   • Dataset: {data_normalized.shape}")
+    
+    # Reducir dimensiones si es muy grande para mejorar clustering
+    if data_normalized.shape[1] > 100:
+        print(f"\nAplicando PCA para optimizar clustering...")
+        pca = PCA(n_components=60, random_state=42)
+        data_for_clustering = pca.fit_transform(data_normalized)
+        variance_explained = pca.explained_variance_ratio_.sum()
+        print(f"PCA aplicado: 60 componentes, {variance_explained:.1%} varianza")
+        
+        data_for_clustering = pd.DataFrame(data_for_clustering, 
+                                         columns=[f'PC{i+1}' for i in range(60)],
+                                         index=data_normalized.index)
+        pca_model = pca
+    else:
+        data_for_clustering = data_normalized
+        pca_model = None
+        print(f"Sin PCA necesario")
+    
+    resultados_todos_modelos = {}
+    
+    # ==========================================
+    # 1. GAUSSIAN MIXTURE MODEL
+    # ==========================================
+    print(f"\n1. Ejecutando Gaussian Mixture Models...")
+    
+    resultados_gmm = {}
+    
+    for cov_type in tipos_covarianza:
+        print(f"\nTipo de covarianza: {cov_type.upper()}")
+        print("-" * 40)
+        
+        resultados_cov = {}
+        
+        for k in range(k_range[0], k_range[1] + 1):
+            print(f"   k={k}...", end="")
+            
+            try:
+                # Configurar Gaussian Mixture
+                gmm = GaussianMixture(
+                    n_components=k,
+                    covariance_type=cov_type,
+                    random_state=42,
+                    max_iter=200,
+                    n_init=5,
+                    init_params='kmeans'
+                )
+                
+                # Ajustar modelo
+                gmm.fit(data_for_clustering)
+                
+                # Obtener labels y probabilidades
+                labels = gmm.predict(data_for_clustering)
+                probabilidades = gmm.predict_proba(data_for_clustering)
+                
+                # Calcular métricas de clustering
+                silhouette = silhouette_score(data_for_clustering, labels)
+                calinski = calinski_harabasz_score(data_for_clustering, labels)
+                davies_bouldin = davies_bouldin_score(data_for_clustering, labels)
+                
+                # Calcular métricas específicas de GMM
+                bic = gmm.bic(data_for_clustering)
+                aic = gmm.aic(data_for_clustering)
+                log_likelihood = gmm.score(data_for_clustering)
+                
+                # Analizar distribución de clusters
+                unique, counts = np.unique(labels, return_counts=True)
+                distribucion = dict(zip(unique, counts))
+                cluster_sizes = counts / len(labels)
+                
+                min_size = cluster_sizes.min()
+                max_size = cluster_sizes.max()
+                std_size = cluster_sizes.std()
+                
+                # Analizar calidad de asignaciones (confianza promedio)
+                max_probs = probabilidades.max(axis=1)
+                confianza_promedio = max_probs.mean()
+                asignaciones_ambiguas = (max_probs < 0.6).sum()
+                
+                # Score compuesto universal (ajustado para todos los modelos)
+                silhouette_norm = (silhouette + 1) / 2
+                calinski_norm = min(calinski / 3000, 1)
+                davies_norm = max(0, 1 - davies_bouldin / 3)
+                confianza_norm = confianza_promedio
+                
+                # Penalización por desbalance extremo
+                # Si el cluster más grande tiene más del 90%, penalizar fuertemente
+                balance_penalty = 1.0
+                if max_size > 0.9:  # Si hay un cluster con más del 90%
+                    balance_penalty = 0.1  # Penalización del 90%
+                elif max_size > 0.7:  # Si hay un cluster con más del 70%
+                    balance_penalty = 0.5  # Penalización del 50%
+                elif max_size > 0.5:  # Si hay un cluster con más del 50%
+                    balance_penalty = 0.8  # Penalización del 20%
+                
+                # Bonus por distribución balanceada
+                balance_bonus = 1.0
+                if std_size < 0.1:  # Desviación estándar baja = más balance
+                    balance_bonus = 1.2
+                elif std_size < 0.2:
+                    balance_bonus = 1.1
+                
+                score_gmm = (silhouette_norm * 0.4 + 
+                           calinski_norm * 0.2 + 
+                           davies_norm * 0.2 + 
+                           confianza_norm * 0.2) * balance_penalty * balance_bonus
+                
+                resultados_cov[k] = {
+                    'modelo': gmm,
+                    'tipo_modelo': 'GMM',
+                    'labels': labels,
+                    'probabilidades': probabilidades,
+                    'silhouette': silhouette,
+                    'calinski_harabasz': calinski,
+                    'davies_bouldin': davies_bouldin,
+                    'bic': bic,
+                    'aic': aic,
+                    'log_likelihood': log_likelihood,
+                    'distribucion': distribucion,
+                    'cluster_sizes': cluster_sizes,
+                    'min_size': min_size,
+                    'max_size': max_size,
+                    'std_size': std_size,
+                    'confianza_promedio': confianza_promedio,
+                    'asignaciones_ambiguas': asignaciones_ambiguas,
+                    'score_gmm': score_gmm,
+                    'cov_type': cov_type
+                }
+                
+                print(f"S:{silhouette:.3f}, BIC:{bic:.0f}, Conf:{confianza_promedio:.3f}, Score:{score_gmm:.3f}")
+                
+            except Exception as e:
+                print(f"Error: {str(e)[:30]}...")
+                continue
+        
+        if resultados_cov:
+            resultados_gmm[cov_type] = resultados_cov
+            print(f"{len(resultados_cov)} modelos exitosos")
+    
+    if resultados_gmm:
+        resultados_todos_modelos['gmm'] = resultados_gmm
+    
+    # ==========================================
+    # 2. K-MEANS Y K-MEANS++
+    # ==========================================
+    print(f"\n2. Ejecutando K-Means y K-Means++...")
+    
+    for init_method, method_name in [('k-means++', 'K-Means++'), ('random', 'K-Means')]:
+        print(f"\nMétodo: {method_name}")
+        print("-" * 40)
+        
+        resultados_kmeans = {}
+        
+        for k in range(k_range[0], k_range[1] + 1):
+            print(f"   k={k}...", end="")
+            
+            try:
+                # Configurar K-Means
+                kmeans = KMeans(
+                    n_clusters=k,
+                    init=init_method,
+                    n_init=10,
+                    max_iter=300,
+                    random_state=42
+                )
+                
+                # Ajustar modelo
+                kmeans.fit(data_for_clustering)
+                labels = kmeans.labels_
+                
+                # Calcular métricas
+                silhouette = silhouette_score(data_for_clustering, labels)
+                calinski = calinski_harabasz_score(data_for_clustering, labels)
+                davies_bouldin = davies_bouldin_score(data_for_clustering, labels)
+                inertia = kmeans.inertia_
+                
+                # Analizar distribución
+                unique, counts = np.unique(labels, return_counts=True)
+                distribucion = dict(zip(unique, counts))
+                cluster_sizes = counts / len(labels)
+                
+                min_size = cluster_sizes.min()
+                max_size = cluster_sizes.max()
+                std_size = cluster_sizes.std()
+                
+                # Calcular distancias a centroides para confianza
+                distances = kmeans.transform(data_for_clustering)
+                min_distances = distances.min(axis=1)
+                confianza_promedio = 1 - (min_distances / min_distances.max()).mean()
+                
+                # Score compuesto
+                silhouette_norm = (silhouette + 1) / 2
+                calinski_norm = min(calinski / 3000, 1)
+                davies_norm = max(0, 1 - davies_bouldin / 3)
+                confianza_norm = confianza_promedio
+                
+                # Penalización por desbalance extremo
+                balance_penalty = 1.0
+                if max_size > 0.9:
+                    balance_penalty = 0.1
+                elif max_size > 0.7:
+                    balance_penalty = 0.5
+                elif max_size > 0.5:
+                    balance_penalty = 0.8
+                
+                # Bonus por distribución balanceada
+                balance_bonus = 1.0
+                if std_size < 0.1:
+                    balance_bonus = 1.2
+                elif std_size < 0.2:
+                    balance_bonus = 1.1
+                
+                score_gmm = (silhouette_norm * 0.4 + 
+                           calinski_norm * 0.2 + 
+                           davies_norm * 0.2 + 
+                           confianza_norm * 0.2) * balance_penalty * balance_bonus
+                
+                resultados_kmeans[k] = {
+                    'modelo': kmeans,
+                    'tipo_modelo': method_name,
+                    'labels': labels,
+                    'probabilidades': None,  # K-Means no tiene probabilidades
+                    'silhouette': silhouette,
+                    'calinski_harabasz': calinski,
+                    'davies_bouldin': davies_bouldin,
+                    'inertia': inertia,
+                    'bic': None,
+                    'aic': None,
+                    'log_likelihood': None,
+                    'distribucion': distribucion,
+                    'cluster_sizes': cluster_sizes,
+                    'min_size': min_size,
+                    'max_size': max_size,
+                    'std_size': std_size,
+                    'confianza_promedio': confianza_promedio,
+                    'asignaciones_ambiguas': 0,
+                    'score_gmm': score_gmm,
+                    'cov_type': None
+                }
+                
+                print(f"S:{silhouette:.3f}, Inertia:{inertia:.0f}, Score:{score_gmm:.3f}")
+                
+            except Exception as e:
+                print(f"Error: {str(e)[:30]}...")
+                continue
+        
+        if resultados_kmeans:
+            resultados_todos_modelos[init_method] = {'default': resultados_kmeans}
+            print(f"{len(resultados_kmeans)} modelos exitosos")
+    
+    # ==========================================
+    # 3. DBSCAN
+    # ==========================================
+    print(f"\n3. Ejecutando DBSCAN...")
+    print("-" * 40)
+    
+    # Para DBSCAN, necesitamos determinar eps óptimo
+    # Usamos el método del codo con k-nearest neighbors
+    n_neighbors = 5
+    neigh = NearestNeighbors(n_neighbors=n_neighbors)
+    neigh.fit(data_for_clustering)
+    distances, indices = neigh.kneighbors(data_for_clustering)
+    distances = np.sort(distances[:, n_neighbors-1], axis=0)
+    
+    # Probar diferentes valores de eps basados en percentiles más altos para evitar demasiado ruido
+    eps_values = np.percentile(distances, [50, 60, 70, 75, 80, 85, 90, 95])
+    
+    resultados_dbscan = {}
+    
+    for i, eps in enumerate(eps_values):
+        print(f"   eps={eps:.3f}...", end="")
+        
+        try:
+            # Configurar DBSCAN
+            dbscan = DBSCAN(
+                eps=eps,
+                min_samples=5,
+                metric='euclidean',
+                n_jobs=-1
+            )
+            
+            # Ajustar modelo
+            labels = dbscan.fit_predict(data_for_clustering)
+            
+            # Verificar si hay clusters válidos (excluyendo ruido -1)
+            n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+            
+            if n_clusters < 2:
+                print(f"Sólo {n_clusters} clusters encontrados")
+                continue
+            
+            # Calcular métricas (excluyendo puntos de ruido)
+            mask = labels != -1
+            if mask.sum() < len(labels) * 0.5:  # Si más del 50% es ruido, saltar
+                print(f"Demasiado ruido ({(~mask).sum()/len(labels)*100:.1f}%)")
+                continue
+            
+            silhouette = silhouette_score(data_for_clustering[mask], labels[mask])
+            calinski = calinski_harabasz_score(data_for_clustering[mask], labels[mask])
+            davies_bouldin = davies_bouldin_score(data_for_clustering[mask], labels[mask])
+            
+            # Analizar distribución
+            unique, counts = np.unique(labels, return_counts=True)
+            distribucion = dict(zip(unique, counts))
+            
+            # Calcular tamaños excluyendo ruido
+            valid_labels = labels[labels != -1]
+            unique_valid, counts_valid = np.unique(valid_labels, return_counts=True)
+            cluster_sizes = counts_valid / len(valid_labels)
+            
+            min_size = cluster_sizes.min() if len(cluster_sizes) > 0 else 0
+            max_size = cluster_sizes.max() if len(cluster_sizes) > 0 else 0
+            std_size = cluster_sizes.std() if len(cluster_sizes) > 0 else 0
+            
+            # Confianza basada en proporción de puntos no-ruido
+            confianza_promedio = mask.sum() / len(labels)
+            
+            # Score compuesto con penalización por desbalance
+            silhouette_norm = (silhouette + 1) / 2
+            calinski_norm = min(calinski / 3000, 1)
+            davies_norm = max(0, 1 - davies_bouldin / 3)
+            confianza_norm = confianza_promedio
+            
+            # Penalización por desbalance extremo
+            balance_penalty = 1.0
+            if max_size > 0.9:
+                balance_penalty = 0.1
+            elif max_size > 0.7:
+                balance_penalty = 0.5
+            elif max_size > 0.5:
+                balance_penalty = 0.8
+            
+            # Bonus por distribución balanceada
+            balance_bonus = 1.0
+            if std_size < 0.1:
+                balance_bonus = 1.2
+            elif std_size < 0.2:
+                balance_bonus = 1.1
+            
+            # Penalización adicional por demasiado ruido
+            noise_penalty = 1.0
+            noise_ratio = (labels == -1).sum() / len(labels)
+            if noise_ratio > 0.3:  # Más del 30% es ruido
+                noise_penalty = 0.5
+            elif noise_ratio > 0.2:  # Más del 20% es ruido
+                noise_penalty = 0.8
+            
+            score_gmm = (silhouette_norm * 0.4 + 
+                       calinski_norm * 0.2 + 
+                       davies_norm * 0.2 + 
+                       confianza_norm * 0.2) * balance_penalty * balance_bonus * noise_penalty
+            
+            resultados_dbscan[f'eps_{eps:.3f}'] = {
+                'modelo': dbscan,
+                'tipo_modelo': 'DBSCAN',
+                'labels': labels,
+                'probabilidades': None,
+                'silhouette': silhouette,
+                'calinski_harabasz': calinski,
+                'davies_bouldin': davies_bouldin,
+                'eps': eps,
+                'n_clusters': n_clusters,
+                'n_noise': (labels == -1).sum(),
+                'bic': None,
+                'aic': None,
+                'log_likelihood': None,
+                'distribucion': distribucion,
+                'cluster_sizes': cluster_sizes,
+                'min_size': min_size,
+                'max_size': max_size,
+                'std_size': std_size,
+                'confianza_promedio': confianza_promedio,
+                'asignaciones_ambiguas': 0,
+                'score_gmm': score_gmm,
+                'cov_type': None
+            }
+            
+            print(f"Clusters:{n_clusters}, S:{silhouette:.3f}, Score:{score_gmm:.3f}")
+            
+        except Exception as e:
+            print(f"Error: {str(e)[:30]}...")
+            continue
+    
+    if resultados_dbscan:
+        resultados_todos_modelos['dbscan'] = {'default': resultados_dbscan}
+        print(f"{len(resultados_dbscan)} modelos exitosos")
+    
+    # ==========================================
+    # 4. CLUSTERING JERÁRQUICO
+    # ==========================================
+    print(f"\n4. Ejecutando Clustering Jerárquico...")
+    
+    linkage_methods = ['ward', 'complete', 'average']
+    
+    for linkage_method in linkage_methods:
+        print(f"\nMétodo de enlace: {linkage_method.upper()}")
+        print("-" * 40)
+        
+        resultados_hierarchical = {}
+        
+        for k in range(k_range[0], k_range[1] + 1):
+            print(f"   k={k}...", end="")
+            
+            try:
+                # Configurar Clustering Jerárquico
+                hierarchical = AgglomerativeClustering(
+                    n_clusters=k,
+                    linkage=linkage_method,
+                    metric='euclidean' if linkage_method == 'ward' else 'euclidean'
+                )
+                
+                # Ajustar modelo
+                labels = hierarchical.fit_predict(data_for_clustering)
+                
+                # Calcular métricas
+                silhouette = silhouette_score(data_for_clustering, labels)
+                calinski = calinski_harabasz_score(data_for_clustering, labels)
+                davies_bouldin = davies_bouldin_score(data_for_clustering, labels)
+                
+                # Analizar distribución
+                unique, counts = np.unique(labels, return_counts=True)
+                distribucion = dict(zip(unique, counts))
+                cluster_sizes = counts / len(labels)
+                
+                min_size = cluster_sizes.min()
+                max_size = cluster_sizes.max()
+                std_size = cluster_sizes.std()
+                
+                # Confianza basada en cohesión intra-cluster
+                confianza_promedio = 0.7  # Valor base para jerárquico
+                
+                # Score compuesto con penalización por desbalance
+                silhouette_norm = (silhouette + 1) / 2
+                calinski_norm = min(calinski / 3000, 1)
+                davies_norm = max(0, 1 - davies_bouldin / 3)
+                confianza_norm = confianza_promedio
+                
+                # Penalización por desbalance extremo
+                balance_penalty = 1.0
+                if max_size > 0.9:
+                    balance_penalty = 0.1
+                elif max_size > 0.7:
+                    balance_penalty = 0.5
+                elif max_size > 0.5:
+                    balance_penalty = 0.8
+                
+                # Bonus por distribución balanceada
+                balance_bonus = 1.0
+                if std_size < 0.1:
+                    balance_bonus = 1.2
+                elif std_size < 0.2:
+                    balance_bonus = 1.1
+                
+                score_gmm = (silhouette_norm * 0.4 + 
+                           calinski_norm * 0.2 + 
+                           davies_norm * 0.2 + 
+                           confianza_norm * 0.2) * balance_penalty * balance_bonus
+                
+                resultados_hierarchical[k] = {
+                    'modelo': hierarchical,
+                    'tipo_modelo': f'Hierarchical-{linkage_method}',
+                    'labels': labels,
+                    'probabilidades': None,
+                    'silhouette': silhouette,
+                    'calinski_harabasz': calinski,
+                    'davies_bouldin': davies_bouldin,
+                    'linkage': linkage_method,
+                    'bic': None,
+                    'aic': None,
+                    'log_likelihood': None,
+                    'distribucion': distribucion,
+                    'cluster_sizes': cluster_sizes,
+                    'min_size': min_size,
+                    'max_size': max_size,
+                    'std_size': std_size,
+                    'confianza_promedio': confianza_promedio,
+                    'asignaciones_ambiguas': 0,
+                    'score_gmm': score_gmm,
+                    'cov_type': None
+                }
+                
+                print(f"S:{silhouette:.3f}, Cal:{calinski:.0f}, Score:{score_gmm:.3f}")
+                
+            except Exception as e:
+                print(f"Error: {str(e)[:30]}...")
+                continue
+        
+        if resultados_hierarchical:
+            resultados_todos_modelos[f'hierarchical_{linkage_method}'] = {'default': resultados_hierarchical}
+            print(f"{len(resultados_hierarchical)} modelos exitosos")
+    
+    return {
+        'resultados': resultados_todos_modelos,
+        'data_used': data_for_clustering,
+        'pca_model': pca_model,
+        'data_original': data_normalized
+    }

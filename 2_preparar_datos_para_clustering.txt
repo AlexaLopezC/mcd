@@ -1,0 +1,292 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+import warnings
+import pickle
+import joblib
+import os
+from datetime import datetime
+
+
+warnings.filterwarnings('ignore')
+
+# ==========================================
+# PASO 2: PREPARACIÓN DE DATOS PARA CLUSTERING
+# ==========================================
+
+def preparar_datos_para_clustering(df,  max_categories_onehot=20):
+    """
+    Prepara tu dataset para clustering sin asumir estructura específica
+    
+    Args:
+        df: Tu DataFrame original
+        max_categories_onehot: Máximo de categorías para One-Hot encoding
+    
+    Returns:
+        dict: Datos preparados y metadatos
+    """
+    
+    print("=" * 60)
+    print("🔧 PASO 2: PREPARACIÓN PARA CLUSTERING")
+    print("=" * 60)
+    
+    # Columnas a eliminar
+    columnas_eliminar = [
+        'IndInactivo', 'Puntaje Acierta Rango', 'Oficina', 'Rango Edad', 'Antiguedad',
+        'Nivel Academico', 'Rango Ingresos', 'Segmento Ingresos vs. Antiguedad',
+        'Cuenta de Deposito', 'Cuenta AFC', 'Cheque Cuenta', 'Tarjeta Debito', 'PAP',
+        'Cupo Activo', 'Credito Libre Inv sin Grtia', 'Credito de Vivienda', 'CrediMutual',
+        'Bancaseguros', 'MasterCardCupo', 'MasterCardSaldo', 'VISACupo', 'VISASaldo',
+        'Credisolidario', 'Solidaridad Plan Basico', 'Incrementos Plan Basico', 'Vida',
+        'Vida Clasica', 'Hospitalizacion', 'Tranquilidad', 'Recuperacion', 'Seguros Auto',
+        'Hogar Mas y Total Home', 'Otras polizas', 'Medicina Integral', 'CEM', 'Salud Oral',
+        'ValorVida', 'Habeas Data', 'IntervaloValorVida', 'IntervaloValorPerseverancia',
+        'IntervaloValorRenta', 'IntervalonumCantidadProductos', 'CuotaCeroUno',
+        'CorrespondenciaVirtualoFisica', 'Orden Antiguedad', 'Orden Rango Ingresos',
+        'Orden Rango Edad', 'CuotasMoraBUC', 'Desempleo', 'Alerta_Habito_Pago_Externo',
+        'Alerta_Capacidad_Pago_Externo', 'Estrellas', 'tenencia', 'uso', 'EstadoScore',
+        'CodDaneCiudadHomologada', 'CiudadHomologada', 'Cantidad_AliviosFinancieros_Coomeva',
+        'Valor_Entregado_AliviosFinancieros_Coomeva', 'Cantidad_AliviosFinancieros_Bancoomeva',
+        'Cantidad_AliviosFinancieros_MP', 'Cantidad_AliviosFinancieros_Corredor',
+        'Valor_Entregado_AliviosFinancieros_Corredor', 'Cantidad_AliviosFinancieros_Fundacion',
+        'ValorBeneficios_Financiero_Histo', 'ValorBeneficios_Salud_Histo',
+        'ValorBeneficios_Educacion_Histo', 'ValorBeneficios_Coomeva_Histo',
+        'ValorBeneficios_FondoSolidar_Histo', 'ValorBeneficios_CoomevaCuotaTAC_Histo',
+        'ValorBeneficios_SaludSaludOral_Histo', 'ValorBeneficios_SaludCEM_Histo',
+        'ValorBeneficios_FinancieroProdAhorro_Histo', 'ValorBeneficios_FinancieroProdCredito_Histo',
+        'ValorBeneficios_FinancieroServicios_Histo', 'Beneficiarios solidaridad',
+        'Beneficiarios solidaridad - hijos menores', 'Beneficiarios solidaridad - hijos mayores',
+        'Beneficiarios solidaridad - padres', 'Beneficiarios solidaridad - conyugue', 'GrupoFamiliar',
+        'TIENE EL DEBITO AUTOMATICO AUTORIZADO', 'AntigÃƒÂ¼edad_Producto_CrediSolidario',
+        'AntigÃƒÂ¼edad_Producto_CrediAsociado', 'AntigÃƒÂ¼edad_Producto_Fondo_Social_Vivienda_Credito_Patrimonial',
+        'AntigÃƒÂ¼edad_Producto_Autos', 'AntigÃƒÂ¼edad_Producto_Hogar', 'AntigÃƒÂ¼edad_Producto_MP',
+        'AntigÃƒÂ¼edad_Producto_SaludOral', 'AntigÃƒÂ¼edad_Producto_CEM', 'AntigÃƒÂ¼edad_Producto_Vida',
+        'AntigÃƒÂ¼edad_Producto_VidaClasica', 'AntigÃƒÂ¼edad_Producto_Hospitalizacion',
+        'AntigÃƒÂ¼edad_Producto_Tranquilidad', 
+        'AntigÃ¼edad_Producto_CrediSolidario', 'AntigÃ¼edad_Producto_CrediAsociado', 'AntigÃ¼edad_Producto_Fondo_Social_Vivienda_Credito_Patrimonial', 
+        'AntigÃ¼edad_Producto_Autos', 'AntigÃ¼edad_Producto_Hogar', 'AntigÃ¼edad_Producto_MP', 'AntigÃ¼edad_Producto_SaludOral', 'AntigÃ¼edad_Producto_CEM', 
+        'AntigÃ¼edad_Producto_Vida', 'AntigÃ¼edad_Producto_VidaClasica', 'AntigÃ¼edad_Producto_Hospitalizacion', 'AntigÃ¼edad_Producto_Tranquilidad',
+        'Tipo_Cliente_Asociado',
+        'Indice_RecaudoPromedio_Coomeva_Creditos_Ult3M',
+        'Indice_RecaudoPromedio_Coomeva_Seguros_Ult_3Meses',
+        'Indice_RecaudoPromedio_Bancoomeva_Ult_3Meses', 'Asociado_RiesgoExclusion',
+        'Tipo_Cliente_Bancoomeva', 'Tipo_Cliente_Prepagada', 'Tipo_Cliente_CEM',
+        'Tipo_Cliente_Seguros', 'Tipo_Cliente_Adicionales', 'CrediAsociado',
+        'Tipo_Cliente_Cooperativa', 'Arquetipo_MP', 'Tipo_Cliente_MP', 'Top100Asociado',
+        'Turnos_En_Oficinas_Total_Ult12Meses',
+        'Turnos_En_Oficinas_Coomeva_Asesores_Integrales_Ult12Meses',
+        'Turnos_En_Oficinas_Bancoomeva_FelicitacionesQuejasReclamos_Ult12Meses',
+        'Turnos_En_Oficinas_Bancoomeva_Venta_De_Productos_Ult12Meses',
+        'Turnos_En_Oficinas_Bancoomeva_Otros_Servicios_Ult12Meses',
+        'Turnos_En_Oficinas_UltimaOficinaVisitada_Ult12Meses',
+        'Tiempo_Promedio_De_Espera_En_Oficinas_Ult12Meses',
+        'Tiempo_Promedio_De_Atencion_En_Oficinas_Ult12Meses',
+        'Tiempo_Promedio_Total_En_Oficinas_Ult12Meses', 'FondoSocialViviendaPatrimonial',
+        'CantIntencionRetiroCooperativa', 'CantPeriodosInactivoUlt12meses',
+        'CantPeriodosInactivoUlt6meses', 'CantPeriodosInactivoUlt3meses',
+        'InactivoMesAnterior', 'TipoIdentificacion', 'Score_Fuga_Hogar',
+        'Score_Fuga_DisminucionesPlanBasico', 'Score_Fuga_Autos',
+        'Score Rentabilidad del Cliente Solidaridad', 'Score_Compra_IncrementosPlanBasico',
+        'Score_Compra_Hogar', 'Score_Compra_Autos', 'cluster', 'val_acierta',
+        'val_perseverancia', 'rango_perseverancia', 'Rango_renta', 'Rango_acierta',
+        'CantidadEventosRecreacion_Histo', 'CantidadEventosRecreacionSinCosto_Histo', 'CantidadEventosRecreacionConCosto_Histo',
+        'ValorEventosRecreacionConCosto_Histo', 'CantidadEventosRecreacion_Ult_3Meses', 'CantidadEventosRecreacionSinCosto_Ult_3Meses',
+        'CantidadEventosRecreacionConCosto_Ult_3Meses', 'ValorEventosRecreacionConCosto_Ult_3Meses', 'CantidadEventosEducacion_Histo',
+        'CantidadEventosEducacionConCosto_Histo', 'ValorEventosEducacionConCosto_Histo', 'CantidadEventosFundacion_Histo',
+        'DebitoAutomatico'
+    ]
+    
+    # Columnas a excluir (ID)
+    exclude_columns = ['Documento']
+    
+    # Crear copia del dataframe y eliminar columnas innecesarias
+    work_df = df.copy()
+    
+    # Eliminar columnas innecesarias si existen
+    columnas_existentes_eliminar = [col for col in columnas_eliminar if col in work_df.columns]
+    if columnas_existentes_eliminar:
+        work_df = work_df.drop(columns=columnas_existentes_eliminar)
+        print(f"Columnas eliminadas: {len(columnas_existentes_eliminar)}")
+        for col in columnas_existentes_eliminar:
+            print(f"   - {col}")
+    
+    # Excluir columna ID si existe
+    columnas_excluir_existentes = [col for col in exclude_columns if col in work_df.columns]
+    if columnas_excluir_existentes:
+        work_df = work_df.drop(columns=columnas_excluir_existentes)
+        print(f"Columnas excluidas (ID): {len(columnas_excluir_existentes)}")
+        for col in columnas_excluir_existentes:
+            print(f"   - {col}")
+
+
+    # Convertir columnas específicas a formato numérico
+    columnas_numericas_especificas = [
+        'Edad',
+        'score',
+        'numCantidadProductos', 
+        'salud_financiera_externa',
+        'CantidadEventosRecreacion_Ult_3Meses', 
+        'CantidadEventosRecreacionSinCosto_Ult_3Meses', 
+        'CantidadEventosRecreacionConCosto_Ult_3Meses', 
+        'CantidadEventosEducacion_Histo', 
+        'CantidadEventosEducacionConCosto_Histo', 
+        'CantidadEventosFundacion_Histo', 
+        'Cantidad_AliviosFinancieros_GECC'
+    ]
+    
+    columnas_convertidas = []
+    for col in columnas_numericas_especificas:
+        if col in work_df.columns:
+            try:
+                # Convertir a numérico, coercing errores a NaN, luego a int64
+                work_df[col] = pd.to_numeric(work_df[col], errors='coerce').astype('Int64')
+                columnas_convertidas.append(col)
+            except Exception as e:
+                print(f"No se pudo convertir {col} a int64: {e}")
+    
+    if columnas_convertidas:
+        print(f"Columnas convertidas a formato int64: {len(columnas_convertidas)}")
+        for col in columnas_convertidas:
+            print(f"   - {col}")
+
+        
+    # Re-clasificar columnas en el dataset de trabajo
+    categorical_columns = []
+    numerical_columns = []
+    
+    for col in work_df.columns:
+        if work_df[col].dtype == 'object':
+            categorical_columns.append(col)
+        elif work_df[col].nunique() < 50 and work_df[col].dtype in ['int64', 'float64']:
+            categorical_columns.append(col)
+        else:
+            numerical_columns.append(col)
+    
+    print(f"\nVariables a procesar:")
+    print(f"   - Categóricas: {len(categorical_columns)}")
+    print(f"   - Numéricas: {len(numerical_columns)}")
+    
+    # Separar categóricas por estrategia de encoding
+    cat_low_cardinality = []   # One-hot encoding
+    cat_high_cardinality = []  # Label encoding
+    
+    for col in categorical_columns:
+        unique_count = work_df[col].nunique()
+        if unique_count <= max_categories_onehot:
+            cat_low_cardinality.append(col)
+        else:
+            cat_high_cardinality.append(col)
+    
+    print(f"\nEstrategia de encoding:")
+    print(f"   - One-Hot Encoding: {len(cat_low_cardinality)} variables")
+    print(f"   - Label Encoding: {len(cat_high_cardinality)} variables")
+    print(f"   - Variables numéricas: {len(numerical_columns)} (normalizar)")
+    
+    # Crear dataset encodificado
+    encoded_data = pd.DataFrame(index=work_df.index)
+    label_encoders = {}
+    encoding_info = {}
+    
+    # 1. PROCESAR VARIABLES NUMÉRICAS
+    print(f"\nProcesando variables numéricas...")
+    
+    for col in numerical_columns:
+        # Manejar valores faltantes con mediana
+        median_value = work_df[col].median()
+        encoded_data[col] = work_df[col].fillna(median_value)
+        
+        # Contar valores faltantes imputados
+        missing_count = work_df[col].isnull().sum()
+        if missing_count > 0:
+            print(f"   • {col}: {missing_count} valores faltantes imputados con mediana ({median_value:.2f})")
+    
+    # 2. PROCESAR CATEGÓRICAS CON ONE-HOT ENCODING
+    print(f"\nProcesando categóricas con One-Hot Encoding...")
+    
+    for col in cat_low_cardinality:
+        # Manejar valores faltantes
+        col_data = work_df[col].fillna('Missing')
+        
+        # Crear dummies
+        dummies = pd.get_dummies(col_data, prefix=col, drop_first=True)
+        
+        # Añadir al dataset encodificado
+        for dummy_col in dummies.columns:
+            encoded_data[dummy_col] = dummies[dummy_col]
+        
+        print(f"   • {col}: {work_df[col].nunique()} categorías → {len(dummies.columns)} variables")
+        
+        # Guardar info
+        encoding_info[col] = {
+            'type': 'onehot',
+            'original_categories': work_df[col].nunique(),
+            'encoded_columns': list(dummies.columns)
+        }
+    
+    # 3. PROCESAR CATEGÓRICAS CON LABEL ENCODING
+    print(f"\nProcesando categóricas con Label Encoding...")
+    
+    for col in cat_high_cardinality:
+        # Manejar valores faltantes
+        col_data = work_df[col].fillna('Missing').astype(str)
+        
+        # Label encoding
+        le = LabelEncoder()
+        encoded_values = le.fit_transform(col_data)
+        encoded_data[f'{col}_label'] = encoded_values
+        
+        # Guardar encoder para interpretación posterior
+        label_encoders[col] = le
+        
+        print(f"   • {col}: {work_df[col].nunique()} categorías → 1 variable numérica")
+        
+        # Guardar info
+        encoding_info[col] = {
+            'type': 'label',
+            'original_categories': work_df[col].nunique(),
+            'encoded_columns': [f'{col}_label']
+        }
+    
+    print(f"\nResultado del encoding:")
+    print(f"   - Dimensiones originales: {work_df.shape}")
+    print(f"   - Dimensiones después del encoding: {encoded_data.shape}")
+    print(f"   - Expansión: {work_df.shape[1]} → {encoded_data.shape[1]} variables")
+    
+    # 4. NORMALIZAR TODOS LOS DATOS
+    print(f"\nNormalizando datos para clustering...")
+    
+    scaler = StandardScaler()
+    data_normalized = pd.DataFrame(
+        scaler.fit_transform(encoded_data),
+        columns=encoded_data.columns,
+        index=encoded_data.index
+    )
+    
+    print(f"Normalización completada")
+    print(f"   - Media de todas las variables: ~0.00")
+    print(f"   - Desviación estándar de todas las variables: ~1.00")
+    
+    # Verificar que no hay valores faltantes
+    missing_after_encoding = data_normalized.isnull().sum().sum()
+    print(f"\nVerificación final:")
+    print(f"   - Valores faltantes después del procesamiento: {missing_after_encoding}")
+    print(f"   - Shape final para clustering: {data_normalized.shape}")
+    
+    # Preparar resultados
+    results = {
+        'data_normalized': data_normalized,
+        'data_encoded_raw': encoded_data,
+        'original_data': work_df,
+        'scaler': scaler,
+        'label_encoders': label_encoders,
+        'encoding_info': encoding_info,
+        'categorical_columns': categorical_columns,
+        'numerical_columns': numerical_columns,
+        'cat_low_cardinality': cat_low_cardinality,
+        'cat_high_cardinality': cat_high_cardinality,
+        'exclude_columns': exclude_columns
+    }
+    
+    return results
